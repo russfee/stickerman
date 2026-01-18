@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Web Blobs</title>
+  <style>
+    :root {
+      --ink: #111111;
+      --paper: #f4f0e8;
+      --sky: #dfe9ff;
+      --accent: #ff6f61;
+      --blob1: #ffd166;
+      --blob2: #7bdff2;
+      --blob3: #b8f2a6;
+      --blob4: #f5a7ff;
+    }
+    * {
+      box-sizing: border-box;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      font-family: "Comic Sans MS", "Chalkboard SE", cursive;
+      background: radial-gradient(circle at 20% 20%, var(--sky), var(--paper));
+      color: var(--ink);
+    }
+    #wrap {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+      image-rendering: pixelated;
+      background:
+        radial-gradient(circle at 10% 15%, #ffffff 0 10px, transparent 11px),
+        radial-gradient(circle at 80% 30%, #ffffff 0 8px, transparent 9px),
+        radial-gradient(circle at 60% 70%, #ffffff 0 12px, transparent 13px),
+        linear-gradient(180deg, #eef4ff 0%, #f8f5f0 65%, #f3efe8 100%);
+      background-size: 200px 200px, 220px 220px, 260px 260px, 100% 100%;
+      background-repeat: repeat, repeat, repeat, no-repeat;
+    }
+    .hud {
+      position: absolute;
+      left: 14px;
+      top: 12px;
+      padding: 10px 14px;
+      background: rgba(255, 255, 255, 0.85);
+      border: 3px solid var(--ink);
+      box-shadow: 4px 4px 0 var(--ink);
+      max-width: 320px;
+      font-size: 14px;
+      line-height: 1.3;
+    }
+    .hud strong {
+      color: var(--accent);
+    }
+    .center-message {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      font-size: clamp(20px, 3vw, 32px);
+      text-align: center;
+      text-shadow: 2px 2px 0 #fff;
+    }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <canvas id="game"></canvas>
+    <div class="hud">
+      <strong>Web Blobs</strong><br />
+      Click blobs to shoot web. Auto-pull only.<br />
+      Keep up with the scroll or fall to doom.
+    </div>
+    <div id="message" class="center-message"></div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    const message = document.getElementById("message");
+
+    const state = {
+      width: 0,
+      height: 0,
+      dpr: 1,
+      time: 0,
+      cameraX: 0,
+      scrollSpeed: 150,
+      gravity: 420,
+      attached: false,
+      anchor: { x: 0, y: 0 },
+      player: {
+        x: 160,
+        y: 260,
+        vx: 0,
+        vy: 0,
+        radius: 12
+      },
+      platforms: [],
+      lastSpawnX: 0,
+      dead: false,
+      lastShot: null,
+      webPrev: null,
+      webPrevDist: null,
+      webMinDist: null,
+      debugHit: null,
+      holding: false,
+      score: 0
+    };
+
+    const blobColors = ["#ffd166", "#7bdff2", "#b8f2a6", "#f5a7ff", "#ffadad"];
+
+    function resize() {
+      state.dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.floor(window.innerWidth * state.dpr);
+      canvas.height = Math.floor(window.innerHeight * state.dpr);
+      state.width = window.innerWidth;
+      state.height = window.innerHeight;
+    }
+
+    function reset() {
+      state.time = 0;
+      state.cameraX = 0;
+      state.player.x = 200;
+      state.player.y = window.innerHeight * 0.5;
+      state.player.vx = 0;
+      state.player.vy = 0;
+      state.attached = false;
+      state.platforms = [];
+      state.lastSpawnX = 0;
+      state.dead = false;
+      state.score = 0;
+      state.lastShot = null;
+      state.webPrev = null;
+      state.webPrevDist = null;
+      state.webMinDist = null;
+      state.debugHit = null;
+      state.holding = false;
+      message.textContent = "";
+      spawnInitial();
+    }
+
+    function spawnInitial() {
+      for (let i = 0; i < 16; i++) {
+        spawnPlatform();
+      }
+    }
+
+    function spawnPlatform() {
+      const spacing = 80 + Math.random() * 80;
+      const x = state.lastSpawnX + spacing + 200;
+      const y = 120 + Math.random() * (window.innerHeight - 240);
+      const r = 26 + Math.random() * 16;
+      state.platforms.push({
+        x,
+        y,
+        r,
+        color: blobColors[Math.floor(Math.random() * blobColors.length)]
+      });
+      state.lastSpawnX = x;
+    }
+
+    function update(dt) {
+      if (state.dead) return;
+
+      state.time += dt;
+      state.cameraX += state.scrollSpeed * dt;
+      state.score = Math.max(state.score, state.cameraX);
+
+      const player = state.player;
+
+      player.vy += state.gravity * dt;
+
+      if (state.attached) {
+        const dx = state.anchor.x - player.x;
+        const dy = state.anchor.y - player.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const dirX = dx / dist;
+        const dirY = dy / dist;
+        const pullStrength = 18;
+        const accel = Math.min(1400, pullStrength * dist);
+
+        player.vx += dirX * accel * dt;
+        player.vy += dirY * accel * dt;
+        player.vx *= 0.985;
+        player.vy *= 0.985;
+
+        if (!state.webPrev) {
+          state.webPrev = { dx, dy };
+        }
+        if (state.webPrevDist === null) {
+          state.webPrevDist = dist;
+        }
+        if (state.webMinDist === null) {
+          state.webMinDist = dist;
+        }
+      }
+
+      player.vx *= 0.996;
+      player.vy *= 0.996;
+
+      player.x += player.vx * dt;
+      player.y += player.vy * dt;
+
+      if (state.attached) {
+        const dx = state.anchor.x - player.x;
+        const dy = state.anchor.y - player.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const breakRadius = 18;
+        if (state.webMinDist !== null && dist < state.webMinDist) {
+          state.webMinDist = dist;
+        }
+        const passedAnchor = state.webMinDist !== null
+          && state.webMinDist <= breakRadius
+          && dist > state.webMinDist + 4;
+        if (dist <= breakRadius || passedAnchor) {
+          state.attached = false;
+          state.webPrev = null;
+          state.webPrevDist = null;
+          state.webMinDist = null;
+        } else {
+          state.webPrev = { dx, dy };
+          state.webPrevDist = dist;
+          state.webMinDist = state.webMinDist === null ? dist : state.webMinDist;
+        }
+      }
+
+      if (!state.attached && player.y > window.innerHeight + 80) {
+        kill("fell out of the world");
+      }
+
+      if (player.x < state.cameraX) {
+        kill("got left behind");
+      }
+
+      while (state.lastSpawnX < state.cameraX + window.innerWidth * 2) {
+        spawnPlatform();
+      }
+
+      state.platforms = state.platforms.filter((p) => p.x + p.r > state.cameraX - 80);
+
+      if (state.lastShot) {
+        state.lastShot.time -= dt;
+        if (state.lastShot.time <= 0) state.lastShot = null;
+      }
+      if (state.debugHit) {
+        state.debugHit.time -= dt;
+        if (state.debugHit.time <= 0) state.debugHit = null;
+      }
+    }
+
+    function kill(reason) {
+      state.dead = true;
+      state.attached = false;
+      message.textContent = `Game over: ${reason}. Click to retry.`;
+    }
+
+    function drawBlob(p) {
+      const screenX = p.x - state.cameraX;
+      const screenY = p.y;
+
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "#111";
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.ellipse(screenX, screenY, p.r * 1.1, p.r * 0.9, Math.sin(p.x * 0.01) * 0.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = "#000";
+      ctx.beginPath();
+      ctx.arc(screenX - p.r * 0.25, screenY - p.r * 0.1, 3, 0, Math.PI * 2);
+      ctx.arc(screenX + p.r * 0.2, screenY + p.r * 0.05, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawPlayer() {
+      const player = state.player;
+      const screenX = player.x - state.cameraX;
+      const screenY = player.y;
+      const tilt = Math.atan2(player.vy, player.vx);
+
+      if (state.attached) {
+        ctx.strokeStyle = "#111";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(screenX, screenY);
+        ctx.lineTo(state.anchor.x - state.cameraX, state.anchor.y);
+        ctx.stroke();
+      }
+      if (state.lastShot) {
+        ctx.strokeStyle = "#111";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 6]);
+        ctx.beginPath();
+        ctx.moveTo(screenX, screenY);
+        ctx.lineTo(state.lastShot.x - state.cameraX, state.lastShot.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      ctx.fillStyle = "#ffffff";
+      ctx.strokeStyle = "#111";
+      ctx.lineWidth = 3;
+
+      ctx.save();
+      ctx.translate(screenX, screenY);
+      ctx.rotate(tilt * 0.4);
+
+      ctx.beginPath();
+      ctx.arc(0, -20, 10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 12, 16, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(-6, -4);
+      ctx.lineTo(-18, 8 + Math.sin(state.time * 6) * 4);
+      ctx.moveTo(6, -4);
+      ctx.lineTo(18, 8 + Math.cos(state.time * 5) * 4);
+      ctx.moveTo(-5, 10);
+      ctx.lineTo(-14, 26);
+      ctx.moveTo(5, 10);
+      ctx.lineTo(14, 26);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    function draw() {
+      ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+      ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+
+      state.platforms.forEach(drawBlob);
+      drawPlayer();
+
+      if (state.debugHit) {
+        const hit = state.debugHit;
+        ctx.strokeStyle = hit.hit ? "#1b8a3b" : "#c92a2a";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.arc(hit.x - state.cameraX, hit.y, hit.r, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      ctx.fillStyle = "#111";
+      ctx.font = "16px 'Comic Sans MS', 'Chalkboard SE', cursive";
+      ctx.fillText(`Distance: ${Math.floor(state.score / 10)} m`, 16, window.innerHeight - 24);
+
+    }
+
+    function loop(timestamp) {
+      if (!state.lastTime) state.lastTime = timestamp;
+      const dt = Math.min(0.03, (timestamp - state.lastTime) / 1000);
+      state.lastTime = timestamp;
+
+      update(dt);
+      draw();
+
+      requestAnimationFrame(loop);
+    }
+
+    function pickPlatform(worldX, worldY) {
+      let best = null;
+      let bestDist = Infinity;
+      for (const p of state.platforms) {
+        const dx = worldX - p.x;
+        const dy = worldY - p.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < bestDist) {
+          best = p;
+          bestDist = dist;
+        }
+      }
+      if (!best) return null;
+      const grabDistance = best.r + 12;
+      return bestDist <= grabDistance ? best : null;
+    }
+
+    function handleShoot(event) {
+      if (event.button !== undefined && event.button !== 0) return;
+      if (state.dead) {
+        reset();
+        return;
+      }
+      state.holding = true;
+      const rect = canvas.getBoundingClientRect();
+      const screenX = event.clientX - rect.left;
+      const screenY = event.clientY - rect.top;
+      const worldX = state.cameraX + screenX;
+      const worldY = screenY;
+      const target = pickPlatform(worldX, worldY);
+      const debugRadius = target ? target.r + 12 : 0;
+      state.debugHit = {
+        x: target ? target.x : worldX,
+        y: target ? target.y : worldY,
+        r: debugRadius,
+        hit: Boolean(target),
+        time: 0.5
+      };
+      state.lastShot = { x: worldX, y: worldY, time: 0.18 };
+      state.webPrev = null;
+      state.webPrevDist = null;
+      state.webMinDist = null;
+      if (target) {
+        state.attached = true;
+        state.anchor.x = target.x;
+        state.anchor.y = target.y;
+      } else {
+        state.attached = false;
+      }
+    }
+
+    function handleRelease() {
+      state.holding = false;
+      state.attached = false;
+      state.webPrev = null;
+      state.webPrevDist = null;
+      state.webMinDist = null;
+    }
+
+    canvas.addEventListener("pointerdown", handleShoot);
+    window.addEventListener("pointerup", handleRelease);
+    window.addEventListener("pointercancel", handleRelease);
+
+    window.addEventListener("resize", () => {
+      resize();
+      reset();
+    });
+
+    resize();
+    reset();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
