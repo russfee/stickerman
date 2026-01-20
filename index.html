@@ -105,7 +105,9 @@
         y: 260,
         vx: 0,
         vy: 0,
-        radius: 12
+        radius: 12,
+        angle: 0,
+        angleVel: 0
       },
       platforms: [],
       lastSpawnX: 0,
@@ -140,6 +142,8 @@
       state.player.y = window.innerHeight * 0.5;
       state.player.vx = 0;
       state.player.vy = 0;
+      state.player.angle = 0;
+      state.player.angleVel = 0;
       state.attached = false;
       state.platforms = [];
       state.lastSpawnX = 0;
@@ -186,11 +190,14 @@
       const vertical = Math.random() < 0.5;
       const w = vertical ? 26 + Math.random() * 24 : 120 + Math.random() * 120;
       const h = vertical ? 160 + Math.random() * 160 : 24 + Math.random() * 24;
+      const speed = 50 + Math.random() * 80;
+      const dir = Math.random() < 0.5 ? -1 : 1;
       state.obstacles.push({
         x,
         y,
         w,
-        h
+        h,
+        vy: speed * dir
       });
       state.lastObstacleX = x;
     }
@@ -235,6 +242,12 @@
 
       player.vx *= 0.996;
       player.vy *= 0.996;
+
+      const targetAngle = Math.atan2(player.vy, player.vx);
+      const angleDelta = Math.atan2(Math.sin(targetAngle - player.angle), Math.cos(targetAngle - player.angle));
+      player.angleVel += angleDelta * 12 * dt;
+      player.angleVel *= 0.9;
+      player.angle += player.angleVel;
 
       player.x += player.vx * dt;
       player.y += player.vy * dt;
@@ -283,6 +296,21 @@
         state.obstacles = state.obstacles.filter((o) => o.x + o.w > state.cameraX - 120);
       }
 
+      const obstacleTop = 60;
+      const obstacleBottom = window.innerHeight - 60;
+      for (const o of state.obstacles) {
+        o.y += o.vy * dt;
+        if (o.y < obstacleTop) {
+          o.y = obstacleTop;
+          o.vy *= -1;
+        }
+        const maxY = obstacleBottom - o.h;
+        if (o.y > maxY) {
+          o.y = maxY;
+          o.vy *= -1;
+        }
+      }
+
       resolveObstacleCollisions();
 
       if (state.lastShot) {
@@ -329,4 +357,234 @@
     function kill(reason) {
       state.dead = true;
       state.attached = false;
-      message.textContent = `Game over: ${reason}. Click to retry.
+      message.textContent = `Game over: ${reason}. Click to retry.`;
+    }
+
+    function drawBlob(p) {
+      const screenX = p.x - state.cameraX;
+      const screenY = p.y;
+
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "#111";
+      ctx.fillStyle = p.color;
+      ctx.beginPath();
+      ctx.ellipse(screenX, screenY, p.r * 1.1, p.r * 0.9, Math.sin(p.x * 0.01) * 0.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = "#000";
+      ctx.beginPath();
+      ctx.arc(screenX - p.r * 0.25, screenY - p.r * 0.1, 3, 0, Math.PI * 2);
+      ctx.arc(screenX + p.r * 0.2, screenY + p.r * 0.05, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawObstacle(o) {
+      const screenX = o.x - state.cameraX;
+      const screenY = o.y;
+
+      ctx.fillStyle = "#ff2d2d";
+      ctx.strokeStyle = "#111";
+      ctx.lineWidth = 3;
+      ctx.fillRect(screenX, screenY, o.w, o.h);
+      ctx.strokeRect(screenX, screenY, o.w, o.h);
+    }
+
+    function drawPlayer() {
+      const player = state.player;
+      const screenX = player.x - state.cameraX;
+      const screenY = player.y;
+      const tilt = player.angle;
+      const sway = Math.max(-1, Math.min(1, player.vx / 360));
+      const lean = Math.max(-1, Math.min(1, player.vy / 420));
+
+      if (state.attached) {
+        ctx.strokeStyle = "#111";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(screenX, screenY);
+        ctx.lineTo(state.anchor.x - state.cameraX, state.anchor.y);
+        ctx.stroke();
+      }
+      if (state.lastShot) {
+        ctx.strokeStyle = "#111";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 6]);
+        ctx.beginPath();
+        ctx.moveTo(screenX, screenY);
+        ctx.lineTo(state.lastShot.x - state.cameraX, state.lastShot.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      ctx.strokeStyle = "#111";
+      ctx.fillStyle = "#fffdf6";
+      ctx.lineWidth = 4;
+
+      ctx.save();
+      ctx.translate(screenX, screenY);
+      ctx.rotate(tilt * 1.15 + lean * 0.35);
+
+      const headY = -28;
+      const neckY = -18;
+      const hipY = 18;
+      const kneeY = 36;
+      const footY = 54;
+      const torsoLeanX = sway * 6;
+      const hipOffsetX = -sway * 6 + lean * 4;
+      const kneeOffsetX = hipOffsetX + sway * 10;
+
+      ctx.beginPath();
+      ctx.arc(0, headY, 7.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(0, neckY);
+      ctx.lineTo(torsoLeanX * 0.6, hipY);
+      ctx.stroke();
+
+      ctx.lineWidth = 3.5;
+      ctx.beginPath();
+      ctx.moveTo(torsoLeanX * 0.2, -6);
+      ctx.lineTo(-16 + sway * 8, 6 + Math.sin(state.time * 6) * 3);
+      ctx.moveTo(torsoLeanX * 0.2, -6);
+      ctx.lineTo(16 + sway * 8, 6 + Math.cos(state.time * 5) * 3);
+      ctx.stroke();
+
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(torsoLeanX * 0.6, hipY);
+      ctx.lineTo(hipOffsetX, kneeY);
+      ctx.lineTo(kneeOffsetX - 6, footY);
+      ctx.moveTo(torsoLeanX * 0.6, hipY);
+      ctx.lineTo(hipOffsetX + 8, kneeY);
+      ctx.lineTo(kneeOffsetX + 14, footY + 2);
+      ctx.stroke();
+
+      ctx.restore();
+    }
+
+    function draw() {
+      ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+      ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+
+      state.platforms.forEach(drawBlob);
+      state.obstacles.forEach(drawObstacle);
+      drawPlayer();
+
+      if (state.debugHit) {
+        const hit = state.debugHit;
+        ctx.strokeStyle = hit.hit ? "#1b8a3b" : "#c92a2a";
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.arc(hit.x - state.cameraX, hit.y, hit.r, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      const distanceText = `Distance: ${Math.floor(state.score / 10)} m`;
+      ctx.save();
+      ctx.font = "bold 20px 'Comic Sans MS', 'Chalkboard SE', cursive";
+      const metrics = ctx.measureText(distanceText);
+      const textX = window.innerWidth - metrics.width - 18;
+      const textY = 30;
+      ctx.translate(textX + metrics.width / 2, textY);
+      ctx.rotate(-0.05);
+      ctx.translate(-(textX + metrics.width / 2), -textY);
+      ctx.shadowColor = "rgba(255, 0, 0, 0.45)";
+      ctx.shadowBlur = 12;
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = "#fff4a8";
+      ctx.strokeText(distanceText, textX, textY);
+      ctx.fillStyle = "#111";
+      ctx.fillText(distanceText, textX, textY);
+      ctx.restore();
+    }
+
+    function loop(timestamp) {
+      if (!state.lastTime) state.lastTime = timestamp;
+      const dt = Math.min(0.03, (timestamp - state.lastTime) / 1000);
+      state.lastTime = timestamp;
+
+      update(dt);
+      draw();
+
+      requestAnimationFrame(loop);
+    }
+
+    function pickPlatform(worldX, worldY) {
+      let best = null;
+      let bestDist = Infinity;
+      for (const p of state.platforms) {
+        const dx = worldX - p.x;
+        const dy = worldY - p.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < bestDist) {
+          best = p;
+          bestDist = dist;
+        }
+      }
+      if (!best) return null;
+      const grabDistance = best.r + 12;
+      return bestDist <= grabDistance ? best : null;
+    }
+
+    function handleShoot(event) {
+      if (event.button !== undefined && event.button !== 0) return;
+      if (state.dead) {
+        reset();
+        return;
+      }
+      state.holding = true;
+      const rect = canvas.getBoundingClientRect();
+      const screenX = event.clientX - rect.left;
+      const screenY = event.clientY - rect.top;
+      const worldX = state.cameraX + screenX;
+      const worldY = screenY;
+      const target = pickPlatform(worldX, worldY);
+      const debugRadius = target ? target.r + 12 : 0;
+      state.debugHit = {
+        x: target ? target.x : worldX,
+        y: target ? target.y : worldY,
+        r: debugRadius,
+        hit: Boolean(target),
+        time: 0.5
+      };
+      state.lastShot = { x: worldX, y: worldY, time: 0.18 };
+      state.webPrev = null;
+      state.webPrevDist = null;
+      state.webMinDist = null;
+      if (target) {
+        state.attached = true;
+        state.anchor.x = target.x;
+        state.anchor.y = target.y;
+      } else {
+        state.attached = false;
+      }
+    }
+
+    function handleRelease() {
+      state.holding = false;
+      state.attached = false;
+      state.webPrev = null;
+      state.webPrevDist = null;
+      state.webMinDist = null;
+    }
+
+    canvas.addEventListener("pointerdown", handleShoot);
+    window.addEventListener("pointerup", handleRelease);
+    window.addEventListener("pointercancel", handleRelease);
+
+    window.addEventListener("resize", () => {
+      resize();
+      reset();
+    });
+
+    resize();
+    reset();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
